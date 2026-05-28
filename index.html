@@ -2651,24 +2651,30 @@ function Dashboard() {
     } catch(e) { console.error('[v66] Error procesando ventas:', e); }
   };
 
-  const GITHUB_HISTORICO_SEMANAL_URL  = 'https://raw.githubusercontent.com/GTindale/dashboard-tindale/main/ventas-semanal-historico.json';
-  const GITHUB_HISTORICO_MENSUAL_URL  = 'https://raw.githubusercontent.com/GTindale/dashboard-tindale/main/ventas-mensual-historico.json';
+  const GITHUB_BASE = 'https://raw.githubusercontent.com/GTindale/dashboard-tindale/main';
+  const GITHUB_VENTAS_URL     = `${GITHUB_BASE}/datos-ventas.xlsx`;
+  const GITHUB_ROTACIONES_URL = `${GITHUB_BASE}/datos-rotaciones.xlsx`;
 
-  // Fusiona semanas/meses del histórico JSON con lo que ya hay en estado,
-  // sin sobreescribir semanas más recientes que ya estén cargadas.
-  const mergeWeeklyHistory = React.useCallback((histData) => {
-    if (!histData?.weeklySalesData?.weeks) return;
+  // Semanas históricas conocidas en GitHub (se van añadiendo aquí cada semana)
+  const GITHUB_SEMANAS = [
+    'W14-2026','W15-2026','W16-2026','W17-2026',
+    'W18-2026','W19-2026','W20-2026','W21-2026'
+  ];
+  const GITHUB_MESES = ['2026-04'];
+
+  const mergeWeeklyHistory = React.useCallback((weekData) => {
+    if (!weekData?.weekKey || !weekData?.rows) return;
     setWeeklySalesData(prev => {
-      const merged = { ...prev, weeks: { ...histData.weeklySalesData.weeks, ...prev.weeks } };
-      return merged;
+      if (prev.weeks?.[weekData.weekKey]) return prev; // ya existe, no sobreescribir
+      return { ...prev, weeks: { ...prev.weeks, [weekData.weekKey]: { rows: weekData.rows, stats: weekData.stats } } };
     });
   }, []);
 
-  const mergeMonthlyHistory = React.useCallback((histData) => {
-    if (!histData?.monthlySalesData?.months) return;
+  const mergeMonthlyHistory = React.useCallback((monthData) => {
+    if (!monthData?.monthKey || !monthData?.rows) return;
     setMonthlySalesData(prev => {
-      const merged = { ...prev, months: { ...histData.monthlySalesData.months, ...prev.months } };
-      return merged;
+      if (prev.months?.[monthData.monthKey]) return prev;
+      return { ...prev, months: { ...prev.months, [monthData.monthKey]: { rows: monthData.rows, stats: monthData.stats } } };
     });
   }, []);
 
@@ -2676,22 +2682,23 @@ function Dashboard() {
     setSpLoading(true);
     setSpStatus(null);
     try {
-      // 1. Histórico semanal (W14-W21 y anteriores)
-      const resHW = await fetch(GITHUB_HISTORICO_SEMANAL_URL, { cache: 'no-store' });
-      if (resHW.ok) {
-        const histW = await resHW.json();
-        mergeWeeklyHistory(histW);
-        if (histW.weeklySelection?.selectedWeek) setSelectedWeek(histW.weeklySelection.selectedWeek);
-      }
+      // 1. Semanas históricas (una por una, en paralelo)
+      await Promise.all(GITHUB_SEMANAS.map(async (wk) => {
+        try {
+          const res = await fetch(`${GITHUB_BASE}/ventas-${wk}.json`, { cache: 'no-store' });
+          if (res.ok) mergeWeeklyHistory(await res.json());
+        } catch(e) { console.warn(`[v66] semana ${wk} no disponible`); }
+      }));
 
-      // 2. Histórico mensual (Abril 2026 y anteriores)
-      const resHM = await fetch(GITHUB_HISTORICO_MENSUAL_URL, { cache: 'no-store' });
-      if (resHM.ok) {
-        const histM = await resHM.json();
-        mergeMonthlyHistory(histM);
-      }
+      // 2. Meses históricos
+      await Promise.all(GITHUB_MESES.map(async (mk) => {
+        try {
+          const res = await fetch(`${GITHUB_BASE}/ventas-mensual-${mk}.json`, { cache: 'no-store' });
+          if (res.ok) mergeMonthlyHistory(await res.json());
+        } catch(e) { console.warn(`[v66] mes ${mk} no disponible`); }
+      }));
 
-      // 3. Semana actual en Excel (sobrescribe la semana más reciente)
+      // 3. Semana actual en Excel (siempre la más reciente, sí sobreescribe)
       const resVen = await fetch(GITHUB_VENTAS_URL, { cache: 'no-store' });
       if (!resVen.ok) throw new Error('ventas GitHub: ' + resVen.status);
       const bufVen = await resVen.arrayBuffer();
